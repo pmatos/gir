@@ -1,11 +1,21 @@
 #lang racket/base
+;; ---------------------------------------------------------------------------------------------------
 
-(require "contract.rkt")
-(provide (contract-out (build-object ffi-builder?))
-         build-object-ptr _gobject gtype->ffi set!-set-properties! set!-get-properties)
+(require ffi/unsafe
+         ffi/unsafe/alloc
+         racket/match
+         "base.rkt"
+         "contract.rkt"
+         (prefix-in f: "field.rkt")
+         "function.rkt"
+         "gtype.rkt"
+         "loadlib.rkt")
 
-(require "loadlib.rkt" "base.rkt" ffi/unsafe ffi/unsafe/alloc "function.rkt" "translator.rkt" "gtype.rkt"
-         racket/match (prefix-in f: "field.rkt"))
+(provide build-object-ptr _gobject gtype->ffi set!-set-properties! set!-get-properties
+ (contract-out
+  [build-object ffi-builder?]))
+
+;; ---------------------------------------------------------------------------------------------------
 
 (define-gi* g-object-info-find-method (_fun _pointer _string -> _info))
 (define-gi* g-object-info-get-parent (_fun _pointer -> _info))
@@ -28,9 +38,12 @@
 
 (define (closures info)
   (define (call name args)
+    (printf "calling method of object name: ~a, args: ~a~n" name args)
     (define function-info (find-method info (c-name name)))
     (if function-info
-        (apply (build-function function-info) args)
+        (let ([f (build-function function-info)])
+          (printf "applying functions to: ~a~n" args)
+          (apply f args))
         (raise-argument-error 'build-object "FFI method name" name)))
   (define fields-dict
     (for/list ([i (in-range (g-object-info-get-n-fields info))])
@@ -59,10 +72,17 @@
   (values call closure))
 
 (define (build-object info)
+  (printf "build-object ~a~n" info)
   (define-values (call closure) (closures info))
   (λ (name . args)
-    (define this (g-object-ref-sink (call name args)))
-    (closure this)))
+    (printf "build-object closure with name ~a, args ~a~n" name args)
+    (define v (call name args))
+    (printf "v is ~a~n" v)
+    ;; we sink the object and create a closure
+    ;; over if it the return type is an object
+    (if (cpointer? v)
+        (closure (g-object-ref-sink v))
+        v)))
 
 (define (build-object-ptr info ptr)
   (define-values (call closure) (closures info))
@@ -80,19 +100,19 @@
 
 (define (gtype->ffi gtype)
   (case-gtype gtype
-    [(invalid void) _void]
-    [(char) _byte]
-    [(uchar) _ubyte]
+    [(invalid  void) _void]
+    [(char)    _byte]
+    [(uchar)   _ubyte]
     [(boolean) _bool]
-    [(int) _int]
-    [(uint) _uint]
-    [(long) _long]
-    [(ulong) _ulong]
-    [(int64) _int64]
-    [(uint64) _uint64]
-    [(float) _float]
-    [(double) _double]
+    [(int)     _int]
+    [(uint)    _uint]
+    [(long)    _long]
+    [(ulong)   _ulong]
+    [(int64)   _int64]
+    [(uint64)  _uint64]
+    [(float)   _float]
+    [(double)  _double]
     [(pointer) _pointer]
-    [(string) _string]
-    [else _gobject]))
+    [(string)  _string]
+    [else      _gobject]))
 

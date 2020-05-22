@@ -1,8 +1,15 @@
 #lang racket/base
-(provide define-gobject* define-gobject define-gi* define-gi g-type-init c-name); g-signal-connect-data)
+;; ---------------------------------------------------------------------------------------------------
 
-(require "utils.rkt" ffi/unsafe ffi/unsafe/define
-         (for-syntax racket/base syntax/parse))
+(provide define-gobject* define-gobject define-gi* define-gi g-type-init c-name)
+
+(require (for-syntax syntax/parse
+                     racket/base)
+         ffi/unsafe
+         ffi/unsafe/define
+         "utils.rkt")
+
+;; ---------------------------------------------------------------------------------------------------
 
 (define gobject-lib 
   (case (system-type)
@@ -27,6 +34,7 @@
     (if (symbol? name)
         (c-name (symbol->string name))
         (string-replace name "-" "_"))))
+
 (require 'c-name (for-syntax 'c-name))
 
 (with-template 

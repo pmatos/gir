@@ -1,7 +1,21 @@
 #lang racket/base
 
-(provide build-translator pointer-translator make-giarg giargs make-out check-args)
-(require "loadlib.rkt" "base.rkt" "glib.rkt" "utils.rkt" ffi/unsafe racket/format)
+;; ---------------------------------------------------------------------------------------------------
+
+(require ffi/unsafe
+         (prefix-in c: racket/contract)
+         racket/format
+         "base.rkt"
+         "loadlib.rkt"
+         "utils.rkt")
+
+(provide build-translator make-out check-args
+         (c:contract-out
+          [make-giarg         (c:-> cpointer?)]
+          [giargs             (c:->* ((c:listof translator?)) (list?) cpointer?)]
+          [pointer-translator translator?]))
+
+;; ---------------------------------------------------------------------------------------------------
 
 (define tag-list '(void boolean int8 uint8 int16 uint16 int32 uint32 int64 uint64
                         float double gtype utf8 filename array interface glist gslist
@@ -16,7 +30,8 @@
 (define-gi* g-type-info-is-zero-terminated (_fun _pointer -> _bool))
 
 (define-struct translator
-  (>giarg >value check description))
+  (>giarg >value check description)
+  #:transparent)
 
 (define _giarg (_union _bool _int8 _uint8 _int16 _uint16
                        _int32 _uint32 _int64 _uint64
@@ -48,29 +63,46 @@
              "}"))
         (else ""))))
 
-(define pointer-translator (make-translator pointer->giarg giarg->pointer 
-                                            cpointer? "instance pointer"))
+(define pointer-translator
+  (make-translator
+   pointer->giarg
+   giarg->pointer 
+   cpointer?
+   "instance pointer"))
 
 (define (build-translator type)
+  (printf "build-translator ~a~n" type)
+  (printf "~a~n" (describe-type type))
   (define tag (g-type-info-get-tag type))
   (define pos (- (find-pos tag tag-list) 1))
   (define pointer? (g-type-info-is-pointer type))
+  (printf "tag: ~a, pos: ~a, pointer: ~a~n" tag pos pointer?)
   (define value->giarg
     (if pointer?
         (case tag
-          [(utf8 filename) (λ (giarg value)
-                             (ptr-set! giarg _string value))] 
-          [else pointer->giarg])
+          [(utf8 filename)
+           (printf "its utf8 or filename~n")
+           (λ (giarg value)
+             (ptr-set! giarg _string value))] 
+          [else
+           (printf "pointer something else~n")
+           pointer->giarg])
         (case tag
-          [(void) (λ (giarg value) (ptr-set! giarg _pointer #f))]
+          [(void)
+           (printf "non-pointer void~n")
+           (λ (giarg value) (ptr-set! giarg _pointer #f))]
           [(boolean int8 uint8 int16 uint16 
-                    int32 uint32 int64 uint64 float double) (λ (giarg value)
-                                                              (union-set! 
-                                                               (ptr-ref giarg _giarg)  
-                                                               pos value))]
-          [(gtype interface) (λ (giarg value)
-                     (ptr-set! giarg _ulong value))]
-          [else pointer->giarg])))
+                    int32 uint32 int64 uint64 float double)
+           (printf "non-pointer primitive number~n")
+           (λ (giarg value)
+             (union-set! (ptr-ref giarg _giarg) pos value))]
+          [(gtype interface)
+           (printf "non-pointer gtype or interface~n")
+           (λ (giarg value)
+             (ptr-set! giarg _ulong value))]
+          [else
+           (printf "non-pointer something else~n")
+           pointer->giarg])))
   (define giarg->value
     (if pointer?
         (case tag
@@ -103,20 +135,23 @@
   (define description (describe-type type))
   (make-translator value->giarg giarg->value check-value description))
 
-(define (giargs translators [values null])
+(define (giargs translators [vs '()])
   (define ptr (malloc _giarg (length translators)))
   (for ([translator (in-list translators)]
-        [value (in-list values)]
+        [value (in-list vs)]
         [i (in-naturals)])
     ((translator->giarg translator) (ptr-add ptr i _giarg) value))
   ptr)
 
 (define (make-out res-trans giarg-res [out-translators null] [giargs-out #f])
-  (apply values (cons
-                 ((translator->value res-trans) giarg-res)
-                 (for/list ([translator (in-list out-translators)]
-                            [i (in-naturals)])
-                   ((translator->value translator) (ptr-add giargs-out i _giarg))))))
+  (printf "make-out ~a ~a ~a ~a~n"
+          res-trans giarg-res out-translators giargs-out)
+  (apply values
+         (cons
+          ((translator->value res-trans) giarg-res)
+          (for/list ([translator (in-list out-translators)]
+                     [i (in-naturals)])
+            ((translator->value translator) (ptr-add giargs-out i _giarg))))))
 
 (define (check-args args translators name)
   (unless (= (length args) (length translators))
